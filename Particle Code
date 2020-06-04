@@ -1,0 +1,226 @@
+// This #include statement was automatically added by the Particle IDE.
+#include <BH1750Lib.h>
+
+//Declare all variables
+struct statusObject {
+    uint16_t magicNumber;
+    uint16_t mode;
+    char* status;
+    uint16_t upTime;
+    uint16_t downTime;
+    uint16_t moveTime;
+};
+
+//Initialize pins
+int up = D7;   //May need to exchange D7 and D6 if you want to be triggered by D6 and vice versa
+int down = D6;
+int led = D5;
+
+//Initialize status object struct for storin settings
+statusObject stsObj;
+
+//Initialize the light sensor
+BH1750Lib bh1750;
+
+//Forward declare functions, methods and important variables
+int updateSettings(String EXTinput);
+int lowerDoor(String goType);
+int raiseDoor(String goType);
+void lightBased();
+void timeBased();
+void bothBased();
+String door;
+
+void setup() {
+    //Setup motor pinmode
+	pinMode(up, OUTPUT);
+    pinMode(down, OUTPUT);
+    //Setup motor on led
+    pinMode(led, OUTPUT);
+    
+    //Begin light sensor module
+    bh1750.begin(BH1750LIB_MODE_CONTINUOUSHIGHRES);
+    
+    //Declares functions to be used through the cloud
+    Particle.function("updateSettings", updateSettings);
+    Particle.function("lower", lowerDoor);
+    Particle.function("raise", raiseDoor);
+    Particle.variable("Door", door);
+    
+    //Set the argon to be in my timezone. This is the UTC offset, being in melbourne victoria means it is +10
+    Time.zone(10);
+    
+    //Get data stored in EEPROM and assign it the stsObj struct
+    EEPROM.get(1, stsObj);
+    //If the data stored in EEPROM isn't valid with the magic number, defaults are assigned
+    if(stsObj.magicNumber != 13)
+    {
+        stsObj = { 13, 2, "lowered", 900, 1800, 15000 };
+        EEPROM.put(1, stsObj);
+    }
+    
+    //Current status of door, for ifttt email notification
+    door = "Nothing";
+}
+
+//Main loop, this checks which mode it currently is set to and does checks based on that
+void loop() {
+    delay(100);
+    door = "nothing";
+    if(stsObj.mode == 1)//Corresponds to light mode
+    {
+        lightBased();
+    }
+    else if(stsObj.mode == 2)//Corresponds to time mode
+    {
+        timeBased();
+    }
+}
+
+//Uses the current time to determine if the door should be raised or lowered
+void timeBased() {
+    
+    //Create time in integers ranging from 0 to 2359 by combining the current hour and minute
+    //Because Time.minute returns from 0-59 without a leading zero i add the zero when it is not present so my final number is correct (12:05 is 1205 instead of 125)
+    int currentTime;
+    if((String(Time.minute()).length()) == 1)
+    {
+        currentTime = ((String(Time.hour())+"0"+String(Time.minute())).toInt());
+    }
+    else
+    {
+        currentTime = ((String(Time.hour())+String(Time.minute())).toInt());
+    }
+    //Get up/raise and down/lower time from status object
+    int upTime = stsObj.upTime;
+    int downTime = stsObj.downTime;
+    
+    //Checks where the current time is in comparisoon to the raise and lower times
+    if(currentTime >= upTime && currentTime < downTime)
+    {
+        raiseDoor("Automatic");
+    }
+    else if(currentTime >= downTime || currentTime < upTime)
+    {
+        lowerDoor("Automatic");
+    }
+}
+
+//Uses the currently detected light level to determine if the door should be raised or lowered
+void lightBased() {
+    uint16_t luxValue = bh1750.lightLevel();
+    
+    if(luxValue > 0)
+    {
+        raiseDoor("Automatic");
+    }
+    else
+    {
+        lowerDoor("Automatic");
+    }
+}
+
+//Lower the door if it is currently raised when run
+int lowerDoor(String goType) {
+    if(stsObj.status == "raised")
+    {
+        //By using a lowering status the door cannot be interrupted to attempt to raise or lower while it is lowering
+        stsObj.status = "lowering";
+        //Set door to lowered for ifttt email update
+        door = "Lowered";
+        //Lower the door for the default amount of time, lowers slightly faster then raises so less time required
+        digitalWrite(down, HIGH);
+        digitalWrite(led, HIGH);
+        delay(stsObj.moveTime-1000);
+        digitalWrite(down, LOW);
+        digitalWrite(led, LOW);
+        //If the call was manual indicated by the goType being Lower Door, then there is a 30 second delay before it goes up again, else there is no delay
+        if(goType == "Lower Door")
+        {
+            delay(30000);
+        }
+        //Set the door status to lowered and update what is stored in EEPROM
+        stsObj.status = "lowered";
+        EEPROM.put(0, stsObj);
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+//Raise the door if it is currently lowered
+int raiseDoor(String goType) {
+    if(stsObj.status == "lowered")
+    {
+        //By using a raising status the door cannot be interrupted to attempt to raise or lower while it is raising
+        stsObj.status = "raising";
+        //Set door to raised for ifttt email update
+        door = "Raised";
+        
+        //Raise the door for the default amount of time
+        digitalWrite(up, HIGH);
+        digitalWrite(led, HIGH);
+        delay(stsObj.moveTime);
+        digitalWrite(up, LOW);
+        digitalWrite(led, LOW);
+        
+        //If the call was manual indicated by the goType being Raise Door, then there is a 30 second delay before it goes down again
+        if(goType == "Raise Door")
+        {
+            delay(30000);
+        }
+        //Update the door status to raised and update what is stored in EEPROM
+        stsObj.status = "raised";
+        EEPROM.put(0, stsObj);
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+//Run whenever update settings from the website is run, this is so the website can update all values at once
+int updateSettings(String EXTinput) 
+{
+    if(EXTinput.length() >= 10)
+    {
+        //Split the recieved string into the parts mode, uptime and downtime
+        int startIndex = 0;
+        int endIndex;
+        
+        //Checks if the recieved mode is light or time and assigns the relevant int
+        endIndex = EXTinput.indexOf(",", startIndex);
+        String STRINGmode = EXTinput.substring(startIndex, endIndex);
+        uint16_t EXTmode;
+        if(STRINGmode == "Light")
+        {
+            EXTmode = 1;
+        }
+        else if(STRINGmode == "Time")
+        {
+            EXTmode = 2;
+        }
+        
+        startIndex = endIndex + 1;
+        endIndex = EXTinput.indexOf(",", startIndex);
+        uint16_t EXTupTime = atoi(EXTinput.substring(startIndex, endIndex));
+
+        startIndex = endIndex + 1;
+        endIndex = EXTinput.indexOf(",", startIndex);
+        uint16_t EXTdownTime = atoi(EXTinput.substring(startIndex, endIndex));
+        
+        //Assigns the settings to a temporary status object then to the main stsObj and finally updates EEPROM
+        statusObject tempObj = {13, EXTmode, stsObj.status, EXTupTime, EXTdownTime, stsObj.moveTime};
+        stsObj = tempObj;
+        EEPROM.put(1, stsObj);
+        
+        return 1;
+    }
+    else
+    {
+        return -1;
+    }
+}
