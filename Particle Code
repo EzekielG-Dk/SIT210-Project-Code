@@ -12,7 +12,7 @@ struct statusObject {
 };
 
 //Initialize pins
-int up = D7;   //May need to exchange D7 and D6 if you want to be triggered by D6 and vice versa
+int up = D7; 
 int down = D6;
 int led = D5;
 
@@ -30,6 +30,8 @@ void lightBased();
 void timeBased();
 void bothBased();
 String door;
+//Update this to a differnt number if wish to change the default/current values through the code
+uint16_t defaultMagicNumber = 13;
 
 void setup() {
     //Setup motor pinmode
@@ -53,9 +55,10 @@ void setup() {
     //Get data stored in EEPROM and assign it the stsObj struct
     EEPROM.get(1, stsObj);
     //If the data stored in EEPROM isn't valid with the magic number, defaults are assigned
-    if(stsObj.magicNumber != 13)
+    if(stsObj.magicNumber != defaultMagicNumber)
     {
-        stsObj = { 13, 2, "lowered", 900, 1800, 15000 };
+        //Change defaults for code flash here
+        stsObj = { defaultMagicNumber, 2, "lowered", 900, 1800, 15000 };
         EEPROM.put(1, stsObj);
     }
     
@@ -213,7 +216,7 @@ int updateSettings(String EXTinput)
         uint16_t EXTdownTime = atoi(EXTinput.substring(startIndex, endIndex));
         
         //Assigns the settings to a temporary status object then to the main stsObj and finally updates EEPROM
-        statusObject tempObj = {13, EXTmode, stsObj.status, EXTupTime, EXTdownTime, stsObj.moveTime};
+        statusObject tempObj = {defaultMagicNumber, EXTmode, stsObj.status, EXTupTime, EXTdownTime, stsObj.moveTime};
         stsObj = tempObj;
         EEPROM.put(1, stsObj);
         
@@ -224,3 +227,4 @@ int updateSettings(String EXTinput)
         return -1;
     }
 }
+
